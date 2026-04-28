@@ -10,6 +10,10 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="application-name" content="SwarWave" />
     <meta name="msapplication-TileColor" content="#8b5cf6" />
+    
+    <!-- ✅ FIX: PC browsers - prevents privacy extensions from blocking API calls based on referrer -->
+    <meta name="referrer" content="no-referrer" />
+    
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.json" />
     <title>SwarWave Studio - Music, Video & Live Radio</title>
@@ -51,6 +55,20 @@
         font-family: system-ui, -apple-system, sans-serif;
         font-size: 14px;
       }
+
+      /* ✅ FIX: Show a friendly message if app takes too long to load (network issues on PC) */
+      .timeout-msg {
+        display: none;
+        color: #f59e0b;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        text-align: center;
+        max-width: 280px;
+        line-height: 1.5;
+      }
+      .timeout-msg.visible {
+        display: block;
+      }
     </style>
   </head>
   <body>
@@ -58,6 +76,9 @@
       <div class="initial-loader">
         <div class="spinner"></div>
         <span class="loader-text">Loading SwarWave...</span>
+        <span class="timeout-msg" id="timeout-hint">
+          Taking too long? Try disabling ad blocker or privacy extensions for this site.
+        </span>
       </div>
     </div>
     
@@ -104,6 +125,14 @@
             unlockAudio();
           }
         });
+
+        // ✅ FIX: Show hint after 8 seconds if app hasn't loaded (PC users with blockers)
+        setTimeout(function () {
+          var hint = document.getElementById('timeout-hint');
+          if (hint && document.getElementById('initial-loader')) {
+            hint.classList.add('visible');
+          }
+        }, 8000);
       })();
     </script>
     <script type="module" src="/src/main.tsx"></script>
