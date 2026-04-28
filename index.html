@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="description" content="SwarWave - Privacy-first music player, video player, playlists, downloads, background playback, PiP, and live radio with 50000+ stations. Developed by Sudhir Kumar." />
+    <meta name="theme-color" content="#8b5cf6" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="SwarWave" />
+    <meta name="msapplication-TileColor" content="#8b5cf6" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>SwarWave Studio - Music, Video & Live Radio</title>
+    <style>
+      /* Initial loading styles */
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, #0f172a, #1e1b4b, #0f172a);
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+      }
+      /* Loading spinner */
+      .initial-loader {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .spinner {
+        width: 48px;
+        height: 48px;
+        border: 3px solid rgba(139, 92, 246, 0.2);
+        border-top-color: #8b5cf6;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      .loader-text {
+        color: #a78bfa;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="initial-loader">
+        <div class="spinner"></div>
+        <span class="loader-text">Loading SwarWave...</span>
+      </div>
+    </div>
+    
+    <!-- WebView Background Audio Hack -->
+    <audio id="silent-audio" loop preload="auto">
+      <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" type="audio/wav" />
+    </audio>
+    
+    <script>
+      (function () {
+        var silentAudio = document.getElementById('silent-audio');
+
+        function unlockAudio() {
+          try {
+            silentAudio.volume = 0.01;
+            var playPromise = silentAudio.play();
+            if (playPromise !== undefined) {
+              playPromise.catch(function () {});
+            }
+          } catch (e) {}
+        }
+
+        // Create on first user interaction (WebView requires gesture)
+        function onFirstInteraction() {
+          unlockAudio();
+          document.removeEventListener('click', onFirstInteraction);
+          document.removeEventListener('touchstart', onFirstInteraction);
+        }
+        document.addEventListener('click', onFirstInteraction, { once: true });
+        document.addEventListener('touchstart', onFirstInteraction, { once: true });
+
+        // Keep WebView alive by periodically touching the title
+        setInterval(function () {
+          try {
+            var t = document.title;
+            document.title = '\u25CF ' + new Date().toLocaleTimeString();
+            requestAnimationFrame(function () { document.title = t; });
+          } catch (e) {}
+        }, 15000);
+
+        // Resume silent audio when app comes back to foreground
+        document.addEventListener('visibilitychange', function () {
+          if (!document.hidden && silentAudio && silentAudio.paused) {
+            unlockAudio();
+          }
+        });
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
