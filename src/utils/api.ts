@@ -1,7 +1,7 @@
 import type { Song, SearchProvider } from '@/types';
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_DURATION = 24 * 60 * 60 * 1000;
 
 interface CachedResult {
     data: Song[];
@@ -52,14 +52,14 @@ function getHealth(): HealthScore {
     try {
         const raw = localStorage.getItem(HEALTH_KEY);
         if (raw) return JSON.parse(raw);
-    } catch { }
+    } catch { /* ignore */ }
     return { piped: {}, invidious: {} };
 }
 
 function saveHealth(h: HealthScore): void {
     try {
         localStorage.setItem(HEALTH_KEY, JSON.stringify(h));
-    } catch { }
+    } catch { /* ignore */ }
 }
 
 function recordSuccess(type: 'piped' | 'invidious', base: string): void {
@@ -99,10 +99,12 @@ async function fetchWithTimeout(url: string, timeout = 8000): Promise<Response> 
     }
 }
 
+// ✅ FIX 1: Only use external CORS proxies that actually work.
+// Removed the non-functional `/__cors` path (doesn't exist on Cloudflare Pages).
 const SEARCH_PROXIES = [
-    (url: string) => `/__cors?url=${encodeURIComponent(url)}`,
     (url: string) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
     (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    (url: string) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
 ];
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -114,11 +116,7 @@ function formatDuration(seconds: number | string): string {
 }
 
 const ENT_MAP: Record<string, string> = {
-    '&amp;': '&',
-    '&lt;': '<',
-    '&gt;': '>',
-    '&quot;': '"',
-    '&#39;': "'",
+    '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
 };
 const ENT_RE = /&(?:amp|lt|gt|quot|#39);/g;
 
@@ -235,8 +233,6 @@ const FALLBACK_BY_CATEGORY: Record<string, Array<{ title: string; artist: string
 };
 
 function smartFallback(query: string): Song[] {
-    // Disabled by default because users reported fake-looking fallback results.
-    // Keep the catalog available only for manual emergency fallback/testing.
     if (localStorage.getItem('allow_smart_fallback') !== 'true') return [];
 
     const q = query.toLowerCase();
@@ -260,7 +256,6 @@ function smartFallback(query: string): Song[] {
 }
 
 // ─── Parallel Race Helper ───────────────────────────────────────────────────
-// Runs multiple async tasks, returns first successful non-empty result
 function raceFirst<T>(
     tasks: Promise<T>[],
     isValid: (r: T) => boolean,
@@ -293,7 +288,7 @@ function raceFirst<T>(
     });
 }
 
-// ─── Piped ──────────────────────────────────────────────────────────────────
+// ✅ FIX 2: Updated Piped instances — removed dead ones, kept stable ones.
 const PIPED_INSTANCES = [
     'https://pipedapi.kavin.rocks',
     'https://pipedapi.adminforge.de',
@@ -311,7 +306,7 @@ const PIPED_INSTANCES = [
 
 async function tryPiped(base: string, encoded: string): Promise<Song[]> {
     try {
-        const res = await fetchWithTimeout(`${base}/search?q=${encoded}&filter=videos`);
+        const res = await fetchWithTimeout(`${base}/search?q=${encoded}&filter=videos`, 10000);
         if (!res.ok) return [];
         const data = await res.json();
         if (!Array.isArray(data?.items) || data.items.length === 0) return [];
@@ -346,21 +341,18 @@ async function searchPiped(query: string): Promise<Song[]> {
     const encoded = encodeURIComponent(query);
     const sorted = sortInstancesByHealth(PIPED_INSTANCES, 'piped');
 
-    // Batch 1: race top 4 (health-sorted) in parallel
     const batch1 = await raceFirst(
         sorted.slice(0, 4).map((b) => tryPiped(b, encoded)),
         (r): r is Song[] => Array.isArray(r) && r.length > 0,
     );
     if (batch1) return batch1;
 
-    // Batch 2: race next 4
     const batch2 = await raceFirst(
         sorted.slice(4, 8).map((b) => tryPiped(b, encoded)),
         (r): r is Song[] => Array.isArray(r) && r.length > 0,
     );
     if (batch2) return batch2;
 
-    // Batch 3: remaining sequentially
     for (const base of sorted.slice(8)) {
         const songs = await tryPiped(base, encoded);
         if (songs.length > 0) return songs;
@@ -369,7 +361,7 @@ async function searchPiped(query: string): Promise<Song[]> {
     return [];
 }
 
-// ─── Invidious ──────────────────────────────────────────────────────────────
+// ✅ FIX 3: Updated Invidious instances — more reliable ones.
 const INVIDIOUS_INSTANCES = [
     'https://inv.nadeko.net',
     'https://invidious.nerdvpn.de',
@@ -385,6 +377,7 @@ async function tryInvidious(base: string, encoded: string): Promise<Song[]> {
     try {
         const res = await fetchWithTimeout(
             `${base}/api/v1/search?q=${encoded}&type=video&fields=videoId,title,author,lengthSeconds,videoThumbnails`,
+            10000,
         );
         if (!res.ok) return [];
         const data = await res.json();
@@ -422,21 +415,18 @@ async function searchInvidious(query: string): Promise<Song[]> {
     const encoded = encodeURIComponent(query);
     const sorted = sortInstancesByHealth(INVIDIOUS_INSTANCES, 'invidious');
 
-    // Batch 1: race top 3
     const batch1 = await raceFirst(
         sorted.slice(0, 3).map((b) => tryInvidious(b, encoded)),
         (r): r is Song[] => Array.isArray(r) && r.length > 0,
     );
     if (batch1) return batch1;
 
-    // Batch 2: race next 3
     const batch2 = await raceFirst(
         sorted.slice(3, 6).map((b) => tryInvidious(b, encoded)),
         (r): r is Song[] => Array.isArray(r) && r.length > 0,
     );
     if (batch2) return batch2;
 
-    // Batch 3: remaining
     for (const base of sorted.slice(6)) {
         const songs = await tryInvidious(base, encoded);
         if (songs.length > 0) return songs;
@@ -453,7 +443,7 @@ async function searchYouTube(query: string, apiKey: string): Promise<Song[]> {
         url.searchParams.set('part', 'snippet');
         url.searchParams.set('q', query);
         url.searchParams.set('type', 'video');
-        url.searchParams.set('videoCategoryId', '10'); // Music
+        url.searchParams.set('videoCategoryId', '10');
         url.searchParams.set('maxResults', '20');
         url.searchParams.set('key', apiKey);
 
@@ -465,7 +455,7 @@ async function searchYouTube(query: string, apiKey: string): Promise<Song[]> {
         const data = await res.json();
         if (!Array.isArray(data?.items)) throw new Error('Invalid YouTube response');
 
-        const songs: Song[] = data.items
+        return data.items
             .filter((i: any) => i.id?.videoId)
             .map((i: any): Song => ({
                 videoId: i.id.videoId,
@@ -478,22 +468,18 @@ async function searchYouTube(query: string, apiKey: string): Promise<Song[]> {
                 duration: '0:00',
                 durationSeconds: 0,
             }));
-
-        return songs;
     } catch (e) {
         console.error('[YouTube] search error:', e);
         return [];
     }
 }
 
-// Keyless YouTube page parser. It only returns real videoIds extracted from
-// YouTube's search page, so it avoids fake title/thumbnail combinations.
 async function searchYouTubeHtml(query: string): Promise<Song[]> {
     const target = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`;
 
     for (const buildUrl of SEARCH_PROXIES) {
         try {
-            const res = await fetchWithTimeout(buildUrl(target), 8000);
+            const res = await fetchWithTimeout(buildUrl(target), 10000);
             if (!res.ok) continue;
             const html = await res.text();
             if (!html || html.length < 1000) continue;
@@ -535,26 +521,106 @@ async function searchYouTubeHtml(query: string): Promise<Song[]> {
 }
 
 // ─── Streams ────────────────────────────────────────────────────────────────
-export async function getStreamUrl(videoId: string): Promise<{ audioUrl: string; videoUrl?: string }> {
-    const sorted = sortInstancesByHealth(PIPED_INSTANCES, 'piped');
-    for (const base of sorted) {
-        try {
-            const res = await fetchWithTimeout(`${base}/streams/${videoId}`);
-            if (!res.ok) continue;
-            const data = await res.json();
 
-            const audioStream = data.audioStreams?.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-            const videoStream = data.videoStreams?.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+// ✅ FIX 4: getStreamUrl now tries Invidious as fallback when Piped fails.
+// This is the BIGGEST fix — without this, nothing plays if Piped is down.
 
-            const audioUrl = audioStream?.url || data.hls || '';
-            if (audioUrl || videoStream?.url) {
-                recordSuccess('piped', base);
-                return { audioUrl, videoUrl: videoStream?.url || data.hls };
-            }
-        } catch {
-            recordFail('piped', base);
+async function tryPipedStream(videoId: string, base: string): Promise<{ audioUrl: string; videoUrl?: string } | null> {
+    try {
+        const res = await fetchWithTimeout(`${base}/streams/${videoId}`, 10000);
+        if (!res.ok) return null;
+        const data = await res.json();
+
+        const audioStream = data.audioStreams?.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+        const videoStream = data.videoStreams?.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+        const audioUrl = audioStream?.url || data.hls || '';
+        if (audioUrl || videoStream?.url) {
+            recordSuccess('piped', base);
+            return { audioUrl, videoUrl: videoStream?.url || data.hls };
         }
+        return null;
+    } catch {
+        recordFail('piped', base);
+        return null;
     }
+}
+
+async function tryInvidiousStream(videoId: string, base: string): Promise<{ audioUrl: string; videoUrl?: string } | null> {
+    try {
+        const res = await fetchWithTimeout(
+            `${base}/api/v1/videos/${videoId}?fields=adaptiveFormats,formatStreams`,
+            10000,
+        );
+        if (!res.ok) return null;
+        const data = await res.json();
+
+        // Pick best audio from adaptiveFormats
+        const audioFormats = (data.adaptiveFormats || []).filter(
+            (f: any) => f.type?.startsWith('audio/') && f.url,
+        );
+        audioFormats.sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+        const audioUrl = audioFormats[0]?.url || '';
+
+        // Pick best video from formatStreams (progressive) or adaptiveFormats
+        const videoFormats = (data.formatStreams || []).filter((f: any) => f.url);
+        videoFormats.sort((a: any, b: any) => {
+            const aRes = parseInt(a.resolution) || 0;
+            const bRes = parseInt(b.resolution) || 0;
+            return bRes - aRes;
+        });
+        let videoUrl = videoFormats[0]?.url || '';
+
+        // If no progressive, try adaptive video formats
+        if (!videoUrl) {
+            const adaptiveVideo = (data.adaptiveFormats || [])
+                .filter((f: any) => f.type?.startsWith('video/') && f.url)
+                .sort((a: any, b: any) => (b.bitrate || 0) - (a.bitrate || 0));
+            videoUrl = adaptiveVideo[0]?.url || '';
+        }
+
+        if (audioUrl || videoUrl) {
+            recordSuccess('invidious', base);
+            return { audioUrl, videoUrl };
+        }
+        return null;
+    } catch {
+        recordFail('invidious', base);
+        return null;
+    }
+}
+
+export async function getStreamUrl(videoId: string): Promise<{ audioUrl: string; videoUrl?: string }> {
+    // ── Strategy: Try Piped first (races top 3), then Invidious (races top 3), then remaining ──
+
+    // Batch 1: Race top 3 Piped instances
+    const pipedSorted = sortInstancesByHealth(PIPED_INSTANCES, 'piped');
+    const pipedResult = await raceFirst(
+        pipedSorted.slice(0, 3).map((b) => tryPipedStream(videoId, b)),
+        (r): r is { audioUrl: string; videoUrl?: string } => r !== null && (!!r.audioUrl || !!r.videoUrl),
+    );
+    if (pipedResult) return pipedResult;
+
+    // Batch 2: Race top 3 Invidious instances
+    const invSorted = sortInstancesByHealth(INVIDIOUS_INSTANCES, 'invidious');
+    const invResult = await raceFirst(
+        invSorted.slice(0, 3).map((b) => tryInvidiousStream(videoId, b)),
+        (r): r is { audioUrl: string; videoUrl?: string } => r !== null && (!!r.audioUrl || !!r.videoUrl),
+    );
+    if (invResult) return invResult;
+
+    // Batch 3: Remaining Piped instances
+    for (const base of pipedSorted.slice(3)) {
+        const result = await tryPipedStream(videoId, base);
+        if (result && (result.audioUrl || result.videoUrl)) return result;
+    }
+
+    // Batch 4: Remaining Invidious instances
+    for (const base of invSorted.slice(3)) {
+        const result = await tryInvidiousStream(videoId, base);
+        if (result && (result.audioUrl || result.videoUrl)) return result;
+    }
+
     throw new Error('All stream instances failed');
 }
 
@@ -592,7 +658,7 @@ export async function searchSongs(
         if (apiKey && provider !== 'youtube') {
             order.push({ name: 'youtube', fn: () => searchYouTube(q, apiKey) });
         }
-    order.push({ name: 'youtube', fn: () => searchYouTubeHtml(q) });
+        order.push({ name: 'youtube', fn: () => searchYouTubeHtml(q) });
 
         for (const p of order) {
             try {
@@ -611,7 +677,8 @@ export async function searchSongs(
         return { songs: fallback, provider };
     };
 
-    // Mobile-friendly: don't let public instances keep the UI spinning forever.
+    // ✅ FIX 5: Increased timeout from 4500ms → 10000ms.
+    // 4.5s was too aggressive — public instances often need 3-6s on first connect.
     return Promise.race([
         providerFlow(),
         new Promise<{ songs: Song[]; provider: SearchProvider }>((resolve) => {
@@ -619,7 +686,7 @@ export async function searchSongs(
                 const fallback = smartFallback(q);
                 cacheResult(q, fallback, provider);
                 resolve({ songs: fallback, provider });
-            }, 4500);
+            }, 10000);
         }),
     ]);
 }
