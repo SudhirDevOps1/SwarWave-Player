@@ -14,18 +14,17 @@ try {
   }
 } catch {}
 
-// Register service worker with update check
+// Register service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
-      .register('/sw.js', { scope: '/' })
+      .register('/sw.js')
       .then((registration) => {
-        // Check for updates every 30 minutes
-        setInterval(() => {
-          registration.update().catch(() => {});
-        }, 30 * 60 * 1000);
+        console.log('SW registered:', registration);
       })
-      .catch(() => {});
+      .catch((error) => {
+        console.log('SW registration failed:', error);
+      });
   });
 }
 

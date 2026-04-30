@@ -53,7 +53,7 @@ export interface Toast {
 export interface Artist {
   name: string;
   image?: string;
-  category: 'bollywood' | 'bhojpuri' | 'punjabi' | 'legends' | 'haryanvi' | 'english' | 'rap';
+  category: 'bollywood' | 'bhojpuri' | 'punjabi' | 'haryanvi' | 'english' | 'rap' | 'legends';
 }
 
 // Mood type

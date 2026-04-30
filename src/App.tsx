@@ -73,8 +73,9 @@ function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [apiKey, setApiKey] = useState(localStorage.getItem('yt_api_key') || '');
+  // Default to invidious - works better on both PC and mobile
   const [preferredProvider, setPreferredProvider] = useState<SearchProvider>(
-    (localStorage.getItem('search_provider') as SearchProvider) || 'piped'
+    (localStorage.getItem('search_provider') as SearchProvider) || 'invidious'
   );
   const [apiKeyStatus, setApiKeyStatus] = useState<YouTubeKeyStatus>('unknown');
   const [playlists, setPlaylists] = useState<Playlist[]>(() => {

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'swarwave-v2';
+const CACHE_NAME = 'privmitlab-v1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -6,7 +6,7 @@ const STATIC_ASSETS = [
   '/favicon.svg'
 ];
 
-// Install event — cache static assets
+// Install event
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
@@ -16,7 +16,7 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// Activate event — remove old caches
+// Activate event
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -30,39 +30,58 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch event — network first, cache fallback
+// ── Local CORS proxy via Service Worker ──────────────────
+// Handles /__cors?url=<encoded> by fetching the URL and returning the response
+const CORS_PREFIX = '/__cors?url=';
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
   if (!event.request.url.startsWith('http')) return;
 
-  // Skip API calls from caching (Piped, Invidious, YouTube, Radio)
-  const url = event.request.url;
-  if (
-    url.includes('pipedapi.') ||
-    url.includes('api.piped.') ||
-    url.includes('invidious.') ||
-    url.includes('inv.') ||
-    url.includes('iv.') ||
-    url.includes('googleapis.com') ||
-    url.includes('radio-browser.info') ||
-    url.includes('allorigins.win') ||
-    url.includes('corsproxy.io') ||
-    url.includes('api.deezer.com') ||
-    url.includes('youtube.com/results')
-  ) {
-    return;
+  const requestUrl = new URL(event.request.url);
+
+  // Intercept /__cors?url=<target> requests
+  if (requestUrl.pathname === '/__cors') {
+    const target = requestUrl.searchParams.get('url');
+    if (target) {
+      event.respondWith(
+        fetch(target, { headers: { Accept: 'application/json, text/html, */*' } })
+          .then(async (res) => {
+            const headers = new Headers(res.headers);
+            headers.set('Access-Control-Allow-Origin', '*');
+            headers.set('Access-Control-Allow-Methods', 'GET');
+            return new Response(res.body, {
+              status: res.status,
+              statusText: res.statusText,
+              headers,
+            });
+          })
+          .catch((error) => {
+            return new Response(JSON.stringify({ error: error.message }), {
+              status: 502,
+              headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+            });
+          })
+      );
+      return;
+    }
   }
 
+  // Default: cache-first for static assets
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        if (!response || response.status !== 200) {
+        // Don't cache if not a valid response
+        if (!response || response.status !== 200 || response.type !== 'basic') {
           return response;
         }
+
+        // Clone the response
         const responseToCache = response.clone();
+
         caches.open(CACHE_NAME).then((cache) => {
           cache.put(event.request, responseToCache);
         });
+
         return response;
       })
       .catch(() => {
